@@ -21,21 +21,22 @@ The project aims to improve accessibility to medical diagnostic support by integ
 - Email/SMS notifications  
 
 ## 🗂️ Repository Contents
-- `/docs` – SRS, DFDs, diagrams, and documentation  
-- `/src` – Model training and inference scripts  
-- `/ui` – React-based web interface  
-- `/backend` – API, authentication, database, and processing logic  
-- `/datasets` – Instructions for downloading Kaggle datasets  
+- `/DFD` – DFD diagrams
+- `/SRS` – SRS
+- `/UML` – UML diagrams 
+- `/medbot` – Full interactive UI integrated with Model
+- `/model` – Model training and inference scripts 
+
 
 ## 🛠️ Tech Stack
 - **Frontend:** React  
-- **Backend:** Python, Flask/Django  
-- **Deep Learning:** TensorFlow (ResNet-50)  
-- **Database:** MySQL  
+- **Backend:** Python
+- **Deep Learning:** TensorFlow (CNN) 
+- **Database:** MongoDB 
 - **OS:** Windows 11  
 
 ## 📥 Dataset
-Chest X-ray datasets for training and evaluation are sourced from Kaggle. Follow dataset usage instructions in `/datasets`.
+Chest X-ray datasets for training and evaluation are sourced from Kaggle.
 
 ## 🧪 Testing
 Includes:
@@ -43,15 +44,10 @@ Includes:
 - Integration tests for full pipeline  
 - UI tests for chatbot and upload interface  
 
-## 📄 License
-This project is for academic and research purposes unless stated otherwise.
 
 ## 🤝 Contributors
-- Team members  
-- Supervisors  
-- Collaborators  
+- Arnav Singh 23106054
+- Aekam Singh Sidhu 23106060
+
 
 ---
-
-Thank you for exploring this project!  
-Feel free to contribute or raise issues through GitHub.
