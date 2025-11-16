@@ -113,16 +113,35 @@ export default function ChestXrayReport() {
     setQuestion(q);
   };
 
-  const handleSendQuestion = () => {
-    if (question.trim()) {
-      setChatMessages([...chatMessages, { type: 'user', text: question }]);
+  const handleSendQuestion = async () => {
+    if (question.trim() && prediction) {
+      const newMessages = [...chatMessages, { type: 'user', text: question }];
+      setChatMessages(newMessages);
       setQuestion('');
-      setTimeout(() => {
-        setChatMessages(prev => [...prev, {
-          type: 'assistant',
-          text: 'Based on the report, I can help you with that. The main findings include stable positioning of central venous catheters, stable cardiomegaly, mild pulmonary edema, and bilateral pleural effusions with bibasilar opacities.'
-        }]);
-      }, 1000);
+
+      try {
+        const response = await fetch('/api/chat', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            question: question,
+            context: prediction,
+          }),
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          setChatMessages(prev => [...prev, { type: 'assistant', text: data.answer }]);
+        } else {
+          console.error('Failed to get answer from chatbot');
+          setChatMessages(prev => [...prev, { type: 'assistant', text: 'Sorry, I am having trouble responding right now.' }]);
+        }
+      } catch (error) {
+        console.error('Error sending question:', error);
+        setChatMessages(prev => [...prev, { type: 'assistant', text: 'Sorry, I am having trouble responding right now.' }]);
+      }
     }
   };
 
@@ -619,7 +638,7 @@ export default function ChestXrayReport() {
         <div className="p-6 border-b border-blue-500">
           <h1 className="text-xl font-bold flex items-center gap-2">
             <FileSearch className="w-6 h-6" />
-            X-ray Reports
+            MEDBOT
           </h1>
           {/* Role Toggle */}
           <div className="mt-4 flex gap-2">
