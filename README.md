@@ -69,7 +69,7 @@ The script prints JSON `{ "predicted_class": "...", "probabilities": [...] }` co
 
 ## 📥 Dataset
 
-Chest X-ray datasets for training and evaluation are sourced from Kaggle.
+Chest X-ray and MURA dataset for training and evaluation are sourced from Kaggle.
 
 ## 🧪 Testing
 
