@@ -510,88 +510,6 @@ export default function ChestXrayReport() {
                 <p className={mutedTextClass}>No reports yet. Generate a new report to see live activity.</p>
               )}
             </div>
-            {selectedReport && (
-              <div
-                className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
-                onClick={closeReportModal}
-              >
-                <div
-                  className={`w-full max-w-4xl rounded-2xl shadow-2xl overflow-hidden ${panelBackgroundClass}`}
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <div className="flex items-center justify-between px-6 py-4 border-b" style={{ borderColor: isDarkMode ? '#1f2937' : '#e5e7eb' }}>
-                    <div>
-                      <p className="text-sm uppercase tracking-wide text-blue-400 font-semibold">
-                        {selectedReport.reportType === 'fracture' ? 'Fracture Report' : 'Chest X-ray Report'}
-                      </p>
-                      <h3 className="text-2xl font-bold mt-1">{selectedReport.predictedClass || selectedReport.fractureLocation || 'Report Details'}</h3>
-                    </div>
-                    <button
-                      onClick={closeReportModal}
-                      className="px-4 py-2 rounded-lg bg-blue-500 text-white font-medium hover:bg-blue-600 transition"
-                    >
-                      Close
-                    </button>
-                  </div>
-                  <div className="p-6 space-y-6">
-                    <div className="grid gap-6 md:grid-cols-2">
-                      <div className={`rounded-xl p-4 border ${isDarkMode ? 'border-gray-700' : 'border-gray-200'}`}>
-                        <h4 className="text-sm font-semibold uppercase tracking-wide mb-3 text-blue-400">Overview</h4>
-                        <dl className="space-y-2 text-sm">
-                          {userRole === 'doctor' && (
-                            <div className="flex justify-between">
-                              <dt className={mutedTextClass}>Patient ID</dt>
-                              <dd>{selectedReport.userId || 'N/A'}</dd>
-                            </div>
-                          )}
-                          <div className="flex justify-between">
-                            <dt className={mutedTextClass}>Date</dt>
-                            <dd>{selectedReport.createdAt ? new Date(selectedReport.createdAt).toLocaleString() : 'N/A'}</dd>
-                          </div>
-                          <div className="flex justify-between">
-                            <dt className={mutedTextClass}>Report Type</dt>
-                            <dd>{selectedReport.reportType === 'fracture' ? 'Fracture' : 'Chest X-ray'}</dd>
-                          </div>
-                          {selectedReport.fractureLocation && (
-                            <div className="flex justify-between">
-                              <dt className={mutedTextClass}>Location</dt>
-                              <dd>{selectedReport.fractureLocation.replace('XR_', '').replace('_', ' ')}</dd>
-                            </div>
-                          )}
-                          <div className="flex justify-between">
-                            <dt className={mutedTextClass}>Confidence</dt>
-                            <dd className={`${getConfidenceColor(selectedReport.confidenceScore)} font-semibold`}>
-                              {getConfidencePercent(selectedReport)}
-                            </dd>
-                          </div>
-                        </dl>
-                      </div>
-                      <div className={`rounded-xl p-4 border ${isDarkMode ? 'border-gray-700' : 'border-gray-200'}`}>
-                        <h4 className="text-sm font-semibold uppercase tracking-wide mb-3 text-blue-400">Model Notes</h4>
-                        <p className="text-sm leading-relaxed">
-                          {selectedReport.reportType === 'fracture'
-                            ? `The model detected potential findings near the ${selectedReport.fractureLocation || selectedReport.predictedClass}. Please correlate with clinical context before final diagnosis.`
-                            : `Predicted class: ${selectedReport.predictedClass || 'Unknown'}. Review radiographic features and correlate clinically before finalizing.`}
-                        </p>
-                        <p className={`text-xs mt-4 ${mutedTextClass}`}>
-                          Saved via MEDBOT · Confidence {getConfidencePercent(selectedReport)}
-                        </p>
-                      </div>
-                    </div>
-                    {selectedReport.imageURL && (
-                      <div className={`rounded-xl overflow-hidden border ${isDarkMode ? 'border-gray-700' : 'border-gray-200'}`}>
-                        <div className="px-4 py-3 border-b" style={{ borderColor: isDarkMode ? '#1f2937' : '#e5e7eb' }}>
-                          <h4 className="text-sm font-semibold uppercase tracking-wide text-blue-400">Uploaded Image</h4>
-                        </div>
-                        <div className="bg-black flex justify-center">
-                          <img src={selectedReport.imageURL} alt="Report X-ray" className="max-h-[400px] object-contain" />
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
         );
       
@@ -1137,7 +1055,8 @@ export default function ChestXrayReport() {
   };
 
   return (
-    <div className={`h-screen flex ${isDarkMode ? 'bg-gray-950 text-gray-100' : 'bg-gray-100 text-gray-900'}`}>
+    <>
+      <div className={`h-screen flex ${isDarkMode ? 'bg-gray-950 text-gray-100' : 'bg-gray-100 text-gray-900'}`}>
       {/* Sidebar Navigation */}
       <div className="w-64 bg-blue-600 text-white flex flex-col">
         <div className="p-6 border-b border-blue-500">
@@ -1233,5 +1152,89 @@ export default function ChestXrayReport() {
         </div>
       </div>
     </div>
+
+      {selectedReport && (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+        onClick={closeReportModal}
+      >
+        <div
+          className={`w-full max-w-4xl rounded-2xl shadow-2xl overflow-hidden ${panelBackgroundClass}`}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex items-center justify-between px-6 py-4 border-b" style={{ borderColor: isDarkMode ? '#1f2937' : '#e5e7eb' }}>
+            <div>
+              <p className="text-sm uppercase tracking-wide text-blue-400 font-semibold">
+                {selectedReport.reportType === 'fracture' ? 'Fracture Report' : 'Chest X-ray Report'}
+              </p>
+              <h3 className="text-2xl font-bold mt-1">{selectedReport.predictedClass || selectedReport.fractureLocation || 'Report Details'}</h3>
+            </div>
+            <button
+              onClick={closeReportModal}
+              className="px-4 py-2 rounded-lg bg-blue-500 text-white font-medium hover:bg-blue-600 transition"
+            >
+              Close
+            </button>
+          </div>
+          <div className="p-6 space-y-6">
+            <div className="grid gap-6 md:grid-cols-2">
+              <div className={`rounded-xl p-4 border ${isDarkMode ? 'border-gray-700' : 'border-gray-200'}`}>
+                <h4 className="text-sm font-semibold uppercase tracking-wide mb-3 text-blue-400">Overview</h4>
+                <dl className="space-y-2 text-sm">
+                  {userRole === 'doctor' && (
+                    <div className="flex justify-between">
+                      <dt className={mutedTextClass}>Patient ID</dt>
+                      <dd>{selectedReport.userId || 'N/A'}</dd>
+                    </div>
+                  )}
+                  <div className="flex justify-between">
+                    <dt className={mutedTextClass}>Date</dt>
+                    <dd>{selectedReport.createdAt ? new Date(selectedReport.createdAt).toLocaleString() : 'N/A'}</dd>
+                  </div>
+                  <div className="flex justify-between">
+                    <dt className={mutedTextClass}>Report Type</dt>
+                    <dd>{selectedReport.reportType === 'fracture' ? 'Fracture' : 'Chest X-ray'}</dd>
+                  </div>
+                  {selectedReport.fractureLocation && (
+                    <div className="flex justify-between">
+                      <dt className={mutedTextClass}>Location</dt>
+                      <dd>{selectedReport.fractureLocation.replace('XR_', '').replace('_', ' ')}</dd>
+                    </div>
+                  )}
+                  <div className="flex justify-between">
+                    <dt className={mutedTextClass}>Confidence</dt>
+                    <dd className={`${getConfidenceColor(selectedReport.confidenceScore)} font-semibold`}>
+                      {getConfidencePercent(selectedReport)}
+                    </dd>
+                  </div>
+                </dl>
+              </div>
+              <div className={`rounded-xl p-4 border ${isDarkMode ? 'border-gray-700' : 'border-gray-200'}`}>
+                <h4 className="text-sm font-semibold uppercase tracking-wide mb-3 text-blue-400">Model Notes</h4>
+                <p className="text-sm leading-relaxed">
+                  {selectedReport.reportType === 'fracture'
+                    ? `The model detected potential findings near the ${selectedReport.fractureLocation || selectedReport.predictedClass}. Please correlate with clinical context before final diagnosis.`
+                    : `Predicted class: ${selectedReport.predictedClass || 'Unknown'}. Review radiographic features and correlate clinically before finalizing.`}
+                </p>
+                <p className={`text-xs mt-4 ${mutedTextClass}`}>
+                  Saved via MEDBOT · Confidence {getConfidencePercent(selectedReport)}
+                </p>
+              </div>
+            </div>
+            {selectedReport.imageURL && (
+              <div className={`rounded-xl overflow-hidden border ${isDarkMode ? 'border-gray-700' : 'border-gray-200'}`}>
+                <div className="px-4 py-3 border-b" style={{ borderColor: isDarkMode ? '#1f2937' : '#e5e7eb' }}>
+                  <h4 className="text-sm font-semibold uppercase tracking-wide text-blue-400">Uploaded Image</h4>
+                </div>
+                <div className="bg-black flex justify-center">
+                  <img src={selectedReport.imageURL} alt="Report X-ray" className="max-h-[400px] object-contain" />
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+      )}
+    </>
   );
 }
