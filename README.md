@@ -26,7 +26,6 @@ The project aims to improve accessibility to medical diagnostic support by integ
 - Chatbot interaction module
 - Report generation
 - User and admin management
-- Email/SMS notifications
 
 ## 🗂️ Repository Contents
 
@@ -41,7 +40,7 @@ The project aims to improve accessibility to medical diagnostic support by integ
 
 - **Frontend:** React / Next.js 16
 - **Backend:** Next.js API routes + Node.js
-- **Deep Learning:** TensorFlow (Chest CNN), PyTorch (MURA Fracture)
+- **Deep Learning:** PyTorch(Chest CNN), PyTorch (MURA Fracture)
 - **Database:** MongoDB
 - **OS:** Windows 11
 
