@@ -64,10 +64,12 @@ export async function POST(req) {
       
       try {
         const result = JSON.parse(stdout);
+        result.reportType = 'chest';
 
         // Save the report to MongoDB
         const report = new Report({
           userId,
+          reportType: 'chest',
           predictedClass: result.predicted_class,
           confidenceScore: result.probabilities[['COVID', 'Normal', 'Viral Pneumonia', 'Lung_Opacity'].indexOf(result.predicted_class)],
           imageURL: `/uploads/${file.name}`, // Assuming images are served from /public/uploads

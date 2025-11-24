@@ -34,7 +34,10 @@ export const AuthProvider = ({ children }) => {
       const data = await res.json();
 
       if (res.ok) {
-        localStorage.setItem('token', data.token);
+        // Store token in localStorage for frontend checks
+        if (data.token) {
+          localStorage.setItem('token', data.token);
+        }
         setUser({ email }); // In a real app, decode token to get user info
         router.push('/');
       } else {

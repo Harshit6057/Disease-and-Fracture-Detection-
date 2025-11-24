@@ -8,10 +8,22 @@ const client = new GoogleGenAI({
 export async function POST(req) {
   const { question, context } = await req.json();
 
+  const reportType = context.reportType || 'chest';
+  const contextDescription = reportType === 'fracture' 
+    ? `This is a fracture detection report. The predicted fracture location is: ${context.fractureLocation || context.predicted_class}. The confidence score and probabilities are provided in the context.`
+    : `This is a chest X-ray report. The predicted class is: ${context.predicted_class}. The confidence score and probabilities are provided in the context.`;
+
   const prompt = `
-    You are a medical chatbot. Answer based on X-ray context.
-    Context: ${JSON.stringify(context)}
+    You are a medical chatbot specialized in ${reportType === 'fracture' ? 'fracture detection and orthopedic imaging' : 'chest X-ray analysis'}. 
+    Answer questions based on the provided report context.
+    
+    ${contextDescription}
+    
+    Full Context: ${JSON.stringify(context)}
+    
     Question: ${question}
+    
+    Please provide a helpful, accurate answer based on the report context. If the question cannot be answered from the context, politely say so.
     Answer:
   `;
 

@@ -19,6 +19,7 @@ export default function ChestXrayReport() {
   const [prediction, setPrediction] = useState(null);
   const [loading, setLoading] = useState(false);
   const [reports, setReports] = useState([]);
+  const [reportType, setReportType] = useState('chest'); // 'chest' or 'fracture'
   const fileInputRef = useRef(null);
 
   useEffect(() => {
@@ -47,16 +48,36 @@ export default function ChestXrayReport() {
     }
 
     try {
+      const predType = prediction.reportType || reportType;
+      const chestClasses = ['COVID', 'Normal', 'Viral Pneumonia', 'Lung_Opacity'];
+      const muraClasses = ['XR_ELBOW', 'XR_FINGER', 'XR_FOREARM', 'XR_HAND', 'XR_HUMERUS', 'XR_SHOULDER', 'XR_WRIST'];
+      
+      let confidenceScore;
+      if (predType === 'chest') {
+        const classIndex = chestClasses.indexOf(prediction.predicted_class);
+        confidenceScore = classIndex >= 0 ? prediction.probabilities[classIndex] : prediction.probabilities[0];
+      } else {
+        const classIndex = muraClasses.indexOf(prediction.predicted_class);
+        confidenceScore = classIndex >= 0 ? prediction.probabilities[classIndex] : prediction.probabilities[0];
+      }
+
+      const reportData = {
+        reportType: predType,
+        predictedClass: prediction.predicted_class,
+        confidenceScore: confidenceScore,
+        imageURL: imageURL,
+      };
+
+      if (predType === 'fracture' && prediction.fractureLocation) {
+        reportData.fractureLocation = prediction.fractureLocation;
+      }
+
       const response = await fetch('/api/reports', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          predictedClass: prediction.predicted_class,
-          confidenceScore: prediction.probabilities[['COVID', 'Normal', 'Viral Pneumonia', 'Lung_Opacity'].indexOf(prediction.predicted_class)],
-          imageURL: imageURL,
-        }),
+        body: JSON.stringify(reportData),
       });
 
       if (response.ok) {
@@ -74,6 +95,13 @@ export default function ChestXrayReport() {
   const handleImageUpload = async (event) => {
     const file = event.target.files[0];
     if (file) {
+      // Check if user is logged in
+      if (!user) {
+        alert('Please login to use this feature. Redirecting to login page...');
+        window.location.href = '/login';
+        return;
+      }
+
       setLoading(true);
       setPrediction(null);
       setImageURL(URL.createObjectURL(file));
@@ -82,32 +110,111 @@ export default function ChestXrayReport() {
       formData.append('image', file);
 
       try {
-        const response = await fetch('/api/predict', {
+        // Use smart prediction that auto-detects image type
+        // Cookies are sent automatically with fetch requests
+        const response = await fetch('/api/predict-smart', {
           method: 'POST',
+          credentials: 'include', // Ensure cookies are sent
           body: formData,
         });
 
         if (response.ok) {
           const data = await response.json();
           setPrediction(data);
+          
+          // Auto-update reportType based on detected type
+          if (data.reportType) {
+            setReportType(data.reportType);
+          }
+          
+          // Update image URL to match the saved filename if provided
+          if (data.imageURL) {
+            setImageURL(data.imageURL);
+          }
+          
+          // Reset chat messages when new prediction is made
+          setChatMessages([
+            {
+              type: 'assistant',
+              text: data.reportType === 'fracture' 
+                ? 'Welcome! Ask me about the fracture location, findings, or specific details in the report above.'
+                : 'Welcome! Ask me about the findings, impression, or specific details in the report above.'
+            }
+          ]);
         } else {
-          console.error('Failed to get prediction');
+          let errorMessage = `Failed to get prediction (Status: ${response.status})`;
+          let shouldRedirect = false;
+          try {
+            // Try to get error message from response
+            const text = await response.text();
+            if (text) {
+              try {
+                const errorData = JSON.parse(text);
+                errorMessage = errorData.details || errorData.error || errorMessage;
+                console.error('Failed to get prediction:', errorData);
+                
+                // Check if token expired or invalid
+                if (response.status === 401 || errorData.code === 'TOKEN_EXPIRED' || errorData.code === 'INVALID_TOKEN') {
+                  shouldRedirect = true;
+                  errorMessage = 'Your session has expired. Please login again.';
+                }
+              } catch (parseError) {
+                // Not JSON, use text as error message if it's meaningful
+                if (text.trim().length > 0 && text.length < 500) {
+                  errorMessage = text.trim();
+                } else {
+                  errorMessage = `Server returned error (${response.status}): ${response.statusText || 'Unknown error'}`;
+                }
+                console.error('Response was not JSON:', text.substring(0, 200));
+              }
+            } else {
+              errorMessage = `Server error (${response.status}): ${response.statusText || 'No response from server'}`;
+            }
+          } catch (error) {
+            console.error('Error reading error response:', error);
+            errorMessage = `Network error: ${error.message || 'Could not connect to server'}`;
+          }
+          
+          alert(errorMessage);
+          setLoading(false);
+          
+          // Redirect to login if token expired
+          if (shouldRedirect || response.status === 401) {
+            setTimeout(() => {
+              window.location.href = '/login';
+            }, 1000);
+          }
         }
       } catch (error) {
         console.error('Error uploading image:', error);
+        alert(`Error uploading image: ${error.message || 'Please try again.'}`);
+        setLoading(false);
       } finally {
         setLoading(false);
       }
     }
   };
 
-  const exampleQuestions = [
-    'What are the main findings?',
-    'Are there any tubes or lines mentioned?',
-    'Summarize the impression',
-    'Is the heart size normal?',
-    'Any signs of pleural effusion?'
-  ];
+  const getExampleQuestions = () => {
+    if (reportType === 'fracture') {
+      return [
+        'What is the fracture location?',
+        'What are the main findings?',
+        'Describe the fracture in detail',
+        'What is the confidence level?',
+        'Any recommendations for treatment?'
+      ];
+    }
+    return [
+      'What are the main findings?',
+      'Are there any tubes or lines mentioned?',
+      'Summarize the impression',
+      'Is the heart size normal?',
+      'Any signs of pleural effusion?'
+    ];
+  };
+
+  const exampleQuestions = getExampleQuestions();
 
   const handleQuestionClick = (q) => {
     setQuestion(q);
@@ -245,7 +352,8 @@ export default function ChestXrayReport() {
                   <tr>
                     {userRole === 'doctor' && <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Patient ID</th>}
                     <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Date</th>
-                    <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Type</th>
+                    <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Report Type</th>
+                    <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Prediction</th>
                     <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Status</th>
                     <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Actions</th>
                   </tr>
@@ -256,7 +364,23 @@ export default function ChestXrayReport() {
                       <tr key={report._id} className="hover:bg-gray-50">
                         {userRole === 'doctor' && <td className="px-6 py-4 text-sm text-gray-900">{report.userId}</td>}
                         <td className="px-6 py-4 text-sm text-gray-600">{new Date(report.createdAt).toLocaleDateString()}</td>
-                        <td className="px-6 py-4 text-sm text-gray-600">{report.predictedClass}</td>
+                        <td className="px-6 py-4 text-sm text-gray-600">
+                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                            report.reportType === 'fracture' ? 'bg-orange-100 text-orange-800' : 'bg-blue-100 text-blue-800'
+                          }`}>
+                            {report.reportType === 'fracture' ? 'Fracture' : 'Chest X-ray'}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 text-sm text-gray-600">
+                          {report.reportType === 'fracture' && report.fractureLocation ? (
+                            <div>
+                              <div className="font-medium">{report.fractureLocation.replace('XR_', '').replace('_', ' ')}</div>
+                              <div className="text-xs text-gray-500">{report.predictedClass}</div>
+                            </div>
+                          ) : (
+                            report.predictedClass
+                          )}
+                        </td>
                         <td className="px-6 py-4">
                           <span className={`px-3 py-1 rounded-full text-sm font-medium ${getConfidenceColor(report.confidenceScore)}`}>
                             {(report.confidenceScore * 100).toFixed(2)}%
@@ -269,7 +393,7 @@ export default function ChestXrayReport() {
                     ))
                   ) : (
                     <tr>
-                      <td colSpan={userRole === 'doctor' ? 5 : 4} className="px-6 py-4 text-center text-gray-500">
+                      <td colSpan={userRole === 'doctor' ? 6 : 5} className="px-6 py-4 text-center text-gray-500">
                         No reports found.
                       </td>
                     </tr>
@@ -391,21 +515,72 @@ export default function ChestXrayReport() {
       case 'new-report':
       default:
         return (
-          <div className="h-full bg-gray-100 p-6 flex items-center justify-center overflow-y-hidden">
-            <div className="w-full h-full bg-white rounded-xl shadow-lg border-2 border-blue-500 overflow-hidden flex flex-col">
+          <div className="bg-gray-100 p-6 flex flex-col min-h-full">
+            <div className="w-full bg-white rounded-xl shadow-lg border-2 border-blue-500 overflow-hidden flex flex-col min-h-0">
               {/* Header */}
               <div className="bg-white px-6 py-4 flex items-center justify-between border-b-2 border-gray-200">
                 <h1 className="text-2xl font-bold text-blue-600">
                   X-ray Report Generation
                 </h1>
-                <button className="bg-gray-100 hover:bg-gray-200 p-2 rounded-full transition">
-                  <Moon className="w-5 h-5 text-gray-600" />
-                </button>
+                <div className="flex items-center gap-4">
+                  {/* Report Type Selector */}
+                  <div className="flex gap-2 bg-gray-100 rounded-lg p-1">
+                    <button
+                      onClick={() => {
+                        setReportType('chest');
+                        setPrediction(null);
+                        setImageURL(null);
+                        setChatMessages([
+                          {
+                            type: 'assistant',
+                            text: 'Welcome! Ask me about the findings, impression, or specific details in the report above.'
+                          }
+                        ]);
+                      }}
+                      className={`px-4 py-2 rounded-md text-sm font-medium transition ${
+                        reportType === 'chest'
+                          ? 'bg-blue-500 text-white'
+                          : 'text-gray-700 hover:bg-gray-200'
+                      }`}
+                    >
+                      Chest X-ray
+                    </button>
+                    <button
+                      onClick={() => {
+                        setReportType('fracture');
+                        setPrediction(null);
+                        setImageURL(null);
+                        setChatMessages([
+                          {
+                            type: 'assistant',
+                            text: 'Welcome! Ask me about the fracture location, findings, or specific details in the report above.'
+                          }
+                        ]);
+                      }}
+                      className={`px-4 py-2 rounded-md text-sm font-medium transition ${
+                        reportType === 'fracture'
+                          ? 'bg-blue-500 text-white'
+                          : 'text-gray-700 hover:bg-gray-200'
+                      }`}
+                    >
+                      Fracture Detection
+                    </button>
+                  </div>
+                  {prediction && prediction.reportType && (
+                    <div className="text-xs text-gray-600 bg-green-50 px-3 py-1 rounded-full border border-green-200">
+                      Auto-detected: {prediction.reportType === 'fracture' ? 'Fracture' : 'Chest X-ray'}
+                    </div>
+                  )}
+                  <button className="bg-gray-100 hover:bg-gray-200 p-2 rounded-full transition">
+                    <Moon className="w-5 h-5 text-gray-600" />
+                  </button>
+                </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-0 flex-1 overflow-hidden">
+              <div className="grid grid-cols-2 gap-0 flex-1 min-h-0">
                 {/* Left Panel - Chat */}
-                <div className="flex flex-col h-full border-r-2 border-gray-200">
+                <div className="flex flex-col h-full min-h-0 border-r-2 border-gray-200">
+
                   {/* Chat Header */}
                   <div className="bg-white border-b-2 border-gray-200 px-6 py-3">
                     <h2 className="text-lg font-semibold flex items-center gap-2 text-gray-900">
@@ -413,12 +588,13 @@ export default function ChestXrayReport() {
                       Chat about Report
                     </h2>
                     <p className="text-sm text-gray-500 mt-1">
-                      Ask questions based *only* on the generated report
+                      Ask questions based *only* on the generated report. Image type is auto-detected.
                     </p>
                   </div>
 
                   {/* Chat Messages */}
-                  <div className="flex-1 overflow-y-auto p-6 bg-gray-50">
+                  <div className="flex-1 min-h-0 overflow-y-auto p-6 bg-gray-50">
+
                     {chatMessages.map((msg, idx) => (
                       <div
                         key={idx}
@@ -448,7 +624,7 @@ export default function ChestXrayReport() {
                         onChange={(e) => setQuestion(e.target.value)}
                         onKeyPress={handleKeyPress}
                         placeholder="Type your question..."
-                        className="flex-1 px-4 py-3 text-base border-2 border-gray-300 rounded-lg focus:outline-none focus:border-blue-500"
+                        className="flex-1 px-4 py-3 text-base border-2 border-gray-300 rounded-lg focus:outline-none focus:border-blue-500 text-gray-900 placeholder:text-gray-400"
                       />
                       <button
                         onClick={handleSendQuestion}
@@ -477,7 +653,7 @@ export default function ChestXrayReport() {
                 </div>
 
                 {/* Right Panel - Image and Report */}
-                <div className="flex flex-col h-full bg-white">
+                <div className="flex flex-col h-full bg-white min-h-0">
                   {/* Patient Info */}
                   <div className="border-b-2 border-gray-200 px-6 py-3">
                     <h2 className="text-lg font-semibold flex items-center gap-2 text-gray-900 mb-2">
@@ -501,11 +677,11 @@ export default function ChestXrayReport() {
                           {imageURL ? (
                             <>
                               <div className="absolute top-2 left-2 bg-black/70 text-white px-2 py-1 text-xs font-medium">
-                                SEMI-UPRIGHT
+                                {reportType === 'fracture' ? 'FRACTURE X-RAY' : 'SEMI-UPRIGHT'}
                               </div>
                               <img
                                 src={imageURL}
-                                alt="Chest X-ray"
+                                alt={reportType === 'fracture' ? 'Fracture X-ray' : 'Chest X-ray'}
                                 className="w-full h-auto"
                                 style={{ transform: `scale(${zoomLevel})`, transformOrigin: 'center' }}
                               />
@@ -553,39 +729,84 @@ export default function ChestXrayReport() {
                           ) : prediction ? (
                             <div>
                               <p className="text-lg font-semibold mb-2">
-                                Predicted Class:{" "}
-                                <span className="text-blue-600">{prediction.predicted_class}</span>
+                                {prediction.reportType === 'fracture' ? 'Fracture Location' : 'Predicted Class'}:{" "}
+                                <span className="text-blue-600">
+                                  {prediction.reportType === 'fracture' 
+                                    ? prediction.fractureLocation || prediction.predicted_class
+                                    : prediction.predicted_class}
+                                </span>
                               </p>
+                              {prediction.reportType === 'fracture' && prediction.fractureLocation && (
+                                <p className="text-sm text-gray-600 mb-2">
+                                  Body Part: <span className="font-medium">{prediction.fractureLocation.replace('XR_', '').replace('_', ' ')}</span>
+                                </p>
+                              )}
                               <p className="mb-4">
                                 Confidence Score:{" "}
                                 <span
                                   className={`font-semibold ${getConfidenceColor(
-                                    prediction.probabilities[
-                                      ['COVID', 'Normal', 'Viral Pneumonia', 'Lung_Opacity'].indexOf(prediction.predicted_class)
-                                    ]
+                                    (() => {
+                                      const predType = prediction.reportType || reportType;
+                                      if (predType === 'fracture') {
+                                        const muraClasses = ['XR_ELBOW', 'XR_FINGER', 'XR_FOREARM', 'XR_HAND', 'XR_HUMERUS', 'XR_SHOULDER', 'XR_WRIST'];
+                                        const classIndex = muraClasses.indexOf(prediction.predicted_class);
+                                        return classIndex >= 0 ? prediction.probabilities[classIndex] : prediction.probabilities[0];
+                                      } else {
+                                        const chestClasses = ['COVID', 'Normal', 'Viral Pneumonia', 'Lung_Opacity'];
+                                        const classIndex = chestClasses.indexOf(prediction.predicted_class);
+                                        return classIndex >= 0 ? prediction.probabilities[classIndex] : prediction.probabilities[0];
+                                      }
+                                    })()
                                   )}`}
                                 >
                                   {(
-                                    prediction.probabilities[
-                                      ['COVID', 'Normal', 'Viral Pneumonia', 'Lung_Opacity'].indexOf(prediction.predicted_class)
-                                    ] * 100
+                                    (() => {
+                                      const predType = prediction.reportType || reportType;
+                                      if (predType === 'fracture') {
+                                        const muraClasses = ['XR_ELBOW', 'XR_FINGER', 'XR_FOREARM', 'XR_HAND', 'XR_HUMERUS', 'XR_SHOULDER', 'XR_WRIST'];
+                                        const classIndex = muraClasses.indexOf(prediction.predicted_class);
+                                        return classIndex >= 0 ? prediction.probabilities[classIndex] : prediction.probabilities[0];
+                                      } else {
+                                        const chestClasses = ['COVID', 'Normal', 'Viral Pneumonia', 'Lung_Opacity'];
+                                        const classIndex = chestClasses.indexOf(prediction.predicted_class);
+                                        return classIndex >= 0 ? prediction.probabilities[classIndex] : prediction.probabilities[0];
+                                      }
+                                    })() * 100
                                   ).toFixed(2)}
                                   %
                                 </span>
                               </p>
                               <div className="text-sm">
                                 <p className="font-semibold mb-2">Summary of Findings:</p>
-                                <p>
-                                  The model predicts the presence of{" "}
-                                  <span className="font-semibold">{prediction.predicted_class}</span> with a high
-                                  degree of confidence. This suggests that the X-ray may show signs
-                                  consistent with this condition.
-                                </p>
-                                <br />
-                                <p>
-                                  For a definitive diagnosis, please consult a qualified
-                                  radiologist.
-                                </p>
+                                {prediction.reportType === 'fracture' ? (
+                                  <>
+                                    <p>
+                                      The model has detected a potential fracture in the{" "}
+                                      <span className="font-semibold">{prediction.fractureLocation || prediction.predicted_class}</span> region
+                                      with a high degree of confidence. This suggests that the X-ray may show signs
+                                      consistent with a fracture in this location.
+                                    </p>
+                                    <br />
+                                    <p>
+                                      For a definitive diagnosis and treatment plan, please consult a qualified
+                                      orthopedic specialist or radiologist.
+                                    </p>
+                                  </>
+                                ) : (
+                                  <>
+                                    <p>
+                                      The model predicts the presence of{" "}
+                                      <span className="font-semibold">{prediction.predicted_class}</span> with a high
+                                      degree of confidence. This suggests that the X-ray may show signs
+                                      consistent with this condition.
+                                    </p>
+                                    <br />
+                                    <p>
+                                      For a definitive diagnosis, please consult a qualified
+                                      radiologist.
+                                    </p>
+                                  </>
+                                )}
                               </div>
                               {user && (
                                 <button

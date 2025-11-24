@@ -21,18 +21,25 @@ export async function POST(req) {
   }
 
   try {
-    const { predictedClass, confidenceScore, imageURL } = await req.json();
+    const { reportType, predictedClass, confidenceScore, imageURL, fractureLocation } = await req.json();
 
-    if (!predictedClass || !confidenceScore || !imageURL) {
-      return new NextResponse('Predicted class, confidence score, and image URL are required', { status: 400 });
+    if (!reportType || !predictedClass || !confidenceScore || !imageURL) {
+      return new NextResponse('Report type, predicted class, confidence score, and image URL are required', { status: 400 });
     }
 
-    const report = new Report({
+    const reportData = {
       userId,
+      reportType,
       predictedClass,
       confidenceScore,
       imageURL,
-    });
+    };
+
+    if (reportType === 'fracture' && fractureLocation) {
+      reportData.fractureLocation = fractureLocation;
+    }
+
+    const report = new Report(reportData);
 
     await report.save();
     return new NextResponse('Report saved successfully', { status: 201 });

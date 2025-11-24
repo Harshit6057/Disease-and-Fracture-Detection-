@@ -6,6 +6,11 @@ const reportSchema = new mongoose.Schema({
     ref: 'User',
     required: true,
   },
+  reportType: {
+    type: String,
+    enum: ['chest', 'fracture'],
+    required: true,
+  },
   predictedClass: {
     type: String,
     required: true,
@@ -17,6 +22,12 @@ const reportSchema = new mongoose.Schema({
   imageURL: {
     type: String,
     required: true,
+  },
+  fractureLocation: {
+    type: String,
+    required: function() {
+      return this.reportType === 'fracture';
+    },
   },
   createdAt: {
     type: Date,
