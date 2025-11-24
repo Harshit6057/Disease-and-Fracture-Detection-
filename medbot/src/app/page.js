@@ -645,7 +645,7 @@ export default function ChestXrayReport() {
                           </div>
                           <div className={`w-3/4 h-full rounded-md ${isDarkMode ? 'bg-gray-800' : 'bg-gray-200'} flex items-end overflow-hidden`}>
                             <div
-                              className="w-full rounded-md bg-gradient-to-t from-blue-600 via-blue-400 to-blue-300 transition-all duration-300"
+                              className="w-full rounded-md bg-linear-to-t from-blue-600 via-blue-400 to-blue-300 transition-all duration-300"
                               style={{ height: `${barHeight}%` }}
                             ></div>
                           </div>
