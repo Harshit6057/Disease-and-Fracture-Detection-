@@ -301,6 +301,10 @@ export async function POST(req) {
 
   const data = await req.formData();
   const file = data.get('image');
+  const requestedReportTypeRaw = data.get('reportType');
+  const requestedReportType = requestedReportTypeRaw
+    ? requestedReportTypeRaw.toString().toLowerCase()
+    : null;
 
   if (!file) {
     return NextResponse.json({ error: 'No image provided' }, { status: 400 });
@@ -334,67 +338,100 @@ export async function POST(req) {
   }
 
   try {
-    // Try both models in parallel to determine image type
-    console.log('Starting both models in parallel...');
-    const [chestResult, fractureResult] = await Promise.all([
-      tryChestModel(imagePath),
-      tryFractureModel(imagePath)
-    ]);
-
-    console.log('Chest model result:', { success: chestResult.success, error: chestResult.error });
-    console.log('Fracture model result:', { success: fractureResult.success, error: fractureResult.error });
-
     let finalResult = null;
     let reportType = null;
 
-    // Determine which model succeeded
-    // Priority: If fracture model succeeds, use it (more specific for bone images)
-    // Only use chest if fracture completely fails
-    if (fractureResult.success && chestResult.success) {
-      // Both succeeded - compare confidence but prioritize fracture for bone images
-      const fractureConf = fractureResult.result.probabilities[
-        ['XR_ELBOW', 'XR_FINGER', 'XR_FOREARM', 'XR_HAND', 'XR_HUMERUS', 'XR_SHOULDER', 'XR_WRIST']
-          .indexOf(fractureResult.result.predicted_class)
-      ];
-      const chestConf = chestResult.result.probabilities[
-        ['COVID', 'Normal', 'Viral Pneumonia', 'Lung_Opacity']
-          .indexOf(chestResult.result.predicted_class)
-      ];
-      
-      // Prefer fracture if confidence is reasonable (>0.3), otherwise compare
-      if (fractureConf > 0.3 || fractureConf > chestConf) {
-        finalResult = fractureResult.result;
-        reportType = 'fracture';
-        console.log('Using fracture model (both succeeded, fracture preferred):', finalResult.predicted_class, 'conf:', fractureConf);
-      } else {
-        finalResult = chestResult.result;
-        reportType = 'chest';
-        console.log('Using chest model (both succeeded, chest higher confidence):', finalResult.predicted_class, 'conf:', chestConf);
-      }
-    } else if (fractureResult.success) {
-      // Only fracture succeeded - use it
-      finalResult = fractureResult.result;
-      reportType = 'fracture';
-      console.log('Using fracture model result (only fracture succeeded):', finalResult.predicted_class);
-    } else if (chestResult.success) {
-      // Only chest succeeded - but warn if fracture failed with specific error
-      if (fractureResult.error && !fractureResult.error.includes('timeout')) {
-        console.warn('Fracture model failed but chest succeeded. Using chest as fallback.');
-        console.warn('Fracture error:', fractureResult.error);
+    if (requestedReportType === 'chest') {
+      console.log('User requested chest model explicitly. Running chest pipeline only.');
+      const chestResult = await tryChestModel(imagePath);
+      if (!chestResult.success) {
+        return NextResponse.json({
+          error: 'Chest model failed',
+          details: chestResult.error || 'Chest model did not return a valid prediction.',
+        }, {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' }
+        });
       }
       finalResult = chestResult.result;
       reportType = 'chest';
-      console.log('Using chest model (fracture failed):', finalResult.predicted_class);
+    } else if (requestedReportType === 'fracture') {
+      console.log('User requested fracture model explicitly. Running fracture pipeline only.');
+      const fractureResult = await tryFractureModel(imagePath);
+      if (!fractureResult.success) {
+        return NextResponse.json({
+          error: 'Fracture model failed',
+          details: fractureResult.error || 'Fracture model did not return a valid prediction.',
+        }, {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+      finalResult = fractureResult.result;
+      reportType = 'fracture';
     } else {
-      // Both models failed - provide detailed error
-      const chestError = chestResult.error || 'Unknown error';
-      const fractureError = fractureResult.error || 'Unknown error';
-      console.error('Both models failed. Chest:', chestError, 'Fracture:', fractureError);
-      
-      return NextResponse.json({ 
-        error: 'Failed to process image with either model',
-        details: `Neither model could process the image. Chest model: ${chestError}. Fracture model: ${fractureError}. Please ensure the image is a valid X-ray and Python models are properly configured.`
-      }, { 
+      // Try both models in parallel to determine image type automatically
+      console.log('No explicit preference provided. Starting both models in parallel...');
+      const [chestResult, fractureResult] = await Promise.all([
+        tryChestModel(imagePath),
+        tryFractureModel(imagePath)
+      ]);
+
+      console.log('Chest model result:', { success: chestResult.success, error: chestResult.error });
+      console.log('Fracture model result:', { success: fractureResult.success, error: fractureResult.error });
+
+      // Determine which model succeeded
+      if (fractureResult.success && chestResult.success) {
+        const fractureConf = fractureResult.result.probabilities[
+          ['XR_ELBOW', 'XR_FINGER', 'XR_FOREARM', 'XR_HAND', 'XR_HUMERUS', 'XR_SHOULDER', 'XR_WRIST']
+            .indexOf(fractureResult.result.predicted_class)
+        ];
+        const chestConf = chestResult.result.probabilities[
+          ['COVID', 'Normal', 'Viral Pneumonia', 'Lung_Opacity']
+            .indexOf(chestResult.result.predicted_class)
+        ];
+        
+        if (fractureConf > 0.3 || fractureConf > chestConf) {
+          finalResult = fractureResult.result;
+          reportType = 'fracture';
+          console.log('Using fracture model (both succeeded, fracture preferred):', finalResult.predicted_class, 'conf:', fractureConf);
+        } else {
+          finalResult = chestResult.result;
+          reportType = 'chest';
+          console.log('Using chest model (both succeeded, chest higher confidence):', finalResult.predicted_class, 'conf:', chestConf);
+        }
+      } else if (fractureResult.success) {
+        finalResult = fractureResult.result;
+        reportType = 'fracture';
+        console.log('Using fracture model result (only fracture succeeded):', finalResult.predicted_class);
+      } else if (chestResult.success) {
+        if (fractureResult.error && !fractureResult.error.includes('timeout')) {
+          console.warn('Fracture model failed but chest succeeded. Using chest as fallback.');
+          console.warn('Fracture error:', fractureResult.error);
+        }
+        finalResult = chestResult.result;
+        reportType = 'chest';
+        console.log('Using chest model (fracture failed):', finalResult.predicted_class);
+      } else {
+        const chestError = chestResult.error || 'Unknown error';
+        const fractureError = fractureResult.error || 'Unknown error';
+        console.error('Both models failed. Chest:', chestError, 'Fracture:', fractureError);
+        
+        return NextResponse.json({ 
+          error: 'Failed to process image with either model',
+          details: `Neither model could process the image. Chest model: ${chestError}. Fracture model: ${fractureError}. Please ensure the image is a valid X-ray and Python models are properly configured.`
+        }, { 
+          status: 500,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+    }
+
+    if (!finalResult || !reportType) {
+      return NextResponse.json({
+        error: 'Failed to produce prediction',
+        details: 'No model produced a valid result.',
+      }, {
         status: 500,
         headers: { 'Content-Type': 'application/json' }
       });

@@ -231,6 +231,7 @@ export default function ChestXrayReport() {
 
       const formData = new FormData();
       formData.append('image', file);
+      formData.append('reportType', reportType);
 
       try {
         // Use smart prediction that auto-detects image type
@@ -246,10 +247,6 @@ export default function ChestXrayReport() {
           setPrediction(data);
           
           // Auto-update reportType based on detected type
-          if (data.reportType) {
-            setReportType(data.reportType);
-          }
-          
           // Update image URL to match the saved filename if provided
           if (data.imageURL) {
             setImageURL(data.imageURL);
