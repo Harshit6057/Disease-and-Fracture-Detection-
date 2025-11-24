@@ -1,6 +1,19 @@
 'use client'
-import React, { useState, useRef ,useEffect} from 'react';
-import { MessageCircle, User, Upload, FileText, Send, Moon, Home, BarChart3, Settings, History, FileSearch } from 'lucide-react';
+import React, { useState, useRef ,useEffect, useCallback} from 'react';
+import { MessageCircle, User, Upload, FileText, Send, Moon, Sun, Home, BarChart3, Settings, History, FileSearch } from 'lucide-react';
+
+const initializeMonthBuckets = () => {
+  const now = new Date();
+  return Array.from({ length: 6 }).map((_, idx) => {
+    const date = new Date(now.getFullYear(), now.getMonth() - (5 - idx), 1);
+    return {
+      label: date.toLocaleString('default', { month: 'short' }),
+      month: date.getMonth(),
+      year: date.getFullYear(),
+      count: 0,
+    };
+  });
+};
 import { useAuth } from '../context/AuthContext';
 
 export default function ChestXrayReport() {
@@ -20,26 +33,135 @@ export default function ChestXrayReport() {
   const [loading, setLoading] = useState(false);
   const [reports, setReports] = useState([]);
   const [reportType, setReportType] = useState('chest'); // 'chest' or 'fracture'
+  const [dashboardStats, setDashboardStats] = useState({
+    totalReports: 0,
+    pendingReview: 0,
+    completedReports: 0,
+    newThisWeek: 0,
+    recentActivity: [],
+  });
+  const [reportTypeCounts, setReportTypeCounts] = useState({
+    chest: 0,
+    fracture: 0,
+  });
+  const [reportsByMonth, setReportsByMonth] = useState(initializeMonthBuckets());
+  const [isFetchingReports, setIsFetchingReports] = useState(false);
+  const [theme, setTheme] = useState('light');
+  const [selectedReport, setSelectedReport] = useState(null);
   const fileInputRef = useRef(null);
+  const updateReportAggregates = useCallback((data = []) => {
+    const totalReports = data.length;
+    const pendingReview = data.filter((report) => {
+      const status = (report?.status || report?.reviewStatus || '').toString().toLowerCase();
+      return status.includes('pending');
+    }).length;
+    const completedReports = totalReports - pendingReview;
+    const weekAgo = new Date();
+    weekAgo.setDate(weekAgo.getDate() - 7);
+    const newThisWeek = data.filter((report) => {
+      if (!report?.createdAt) return false;
+      const created = new Date(report.createdAt);
+      return !Number.isNaN(created.getTime()) && created >= weekAgo;
+    }).length;
+    const recentActivity = [...data]
+      .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
+      .slice(0, 3);
+
+    setDashboardStats({
+      totalReports,
+      pendingReview,
+      completedReports,
+      newThisWeek,
+      recentActivity,
+    });
+
+    const typeCounts = data.reduce(
+      (acc, report) => {
+        const type = report?.reportType === 'fracture' ? 'fracture' : 'chest';
+        acc[type] = (acc[type] || 0) + 1;
+        return acc;
+      },
+      { chest: 0, fracture: 0 }
+    );
+    setReportTypeCounts({
+      chest: typeCounts.chest || 0,
+      fracture: typeCounts.fracture || 0,
+    });
+
+    const monthBuckets = initializeMonthBuckets();
+    data.forEach((report) => {
+      if (!report?.createdAt) return;
+      const created = new Date(report.createdAt);
+      const bucket = monthBuckets.find(
+        (item) => item.month === created.getMonth() && item.year === created.getFullYear()
+      );
+      if (bucket) {
+        bucket.count += 1;
+      }
+    });
+    setReportsByMonth(monthBuckets);
+  }, []);
+  const fetchReports = useCallback(async () => {
+    if (!user) {
+      setReports([]);
+      updateReportAggregates([]);
+      return;
+    }
+
+    setIsFetchingReports(true);
+    try {
+      const response = await fetch('/api/reports');
+      if (response.ok) {
+        const data = await response.json();
+        setReports(data);
+        updateReportAggregates(data);
+      } else {
+        console.error('Failed to fetch reports');
+      }
+    } catch (error) {
+      console.error('Error fetching reports:', error);
+    } finally {
+      setIsFetchingReports(false);
+    }
+  }, [updateReportAggregates, user]);
+
+  useEffect(() => {
+    try {
+      const storedTheme = localStorage.getItem('medbot-theme');
+      if (storedTheme) {
+        setTheme(storedTheme);
+      }
+    } catch (error) {
+      console.warn('Unable to read theme from storage', error);
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('medbot-theme', theme);
+    } catch (error) {
+      console.warn('Unable to persist theme', error);
+    }
+  }, [theme]);
+
+  useEffect(() => {
+    if (typeof document !== 'undefined') {
+      document.body.style.backgroundColor = theme === 'dark' ? '#0f172a' : '#f5f7fb';
+      document.body.style.color = theme === 'dark' ? '#e2e8f0' : '#0f172a';
+    }
+  }, [theme]);
+
+  useEffect(() => {
+    if (user) {
+      fetchReports();
+    }
+  }, [user, fetchReports]);
 
   useEffect(() => {
     if (currentPage === 'history' && user) {
-      const fetchReports = async () => {
-        try {
-          const response = await fetch('/api/reports');
-          if (response.ok) {
-            const data = await response.json();
-            setReports(data);
-          } else {
-            console.error('Failed to fetch reports');
-          }
-        } catch (error) {
-          console.error('Error fetching reports:', error);
-        }
-      };
       fetchReports();
     }
-  }, [currentPage, user]);
+  }, [currentPage, user, fetchReports]);
 
   const handleSaveReport = async () => {
     if (!prediction || !imageURL || !user) {
@@ -82,6 +204,7 @@ export default function ChestXrayReport() {
 
       if (response.ok) {
         alert('Report saved successfully!');
+        await fetchReports();
       } else {
         const errorData = await response.json();
         alert(`Failed to save report: ${errorData.message || response.statusText}`);
@@ -273,6 +396,37 @@ export default function ChestXrayReport() {
   ];
 
   const navItems = userRole === 'doctor' ? doctorNavItems : patientNavItems;
+  const isDarkMode = theme === 'dark';
+  const surfaceClass = isDarkMode ? 'bg-gray-800 border border-gray-700 text-gray-100' : 'bg-white border-2 border-gray-200 text-gray-900';
+  const mutedTextClass = isDarkMode ? 'text-gray-300' : 'text-gray-600';
+  const softSurfaceClass = isDarkMode ? 'bg-gray-900 border border-gray-800' : 'bg-gray-50 border border-gray-200';
+  const panelBackgroundClass = isDarkMode ? 'bg-gray-900 text-gray-100' : 'bg-white text-gray-900';
+  const pageBackgroundClass = isDarkMode ? 'bg-gray-950 text-gray-100' : 'bg-gray-50 text-gray-900';
+  const dividerClass = isDarkMode ? 'border-gray-800' : 'border-gray-200';
+  const inputBaseClasses = isDarkMode
+    ? 'bg-gray-800 border-gray-600 text-gray-100 placeholder:text-gray-400'
+    : 'bg-white border-gray-300 text-gray-900 placeholder:text-gray-500';
+  const totalTypeCount = Math.max(reportTypeCounts.chest + reportTypeCounts.fracture, 0);
+  const reportTypeSummary = [
+    {
+      label: 'Chest X-ray',
+      value: reportTypeCounts.chest,
+      percent: totalTypeCount ? Math.round((reportTypeCounts.chest / totalTypeCount) * 100) : 0,
+      barColor: 'bg-blue-500',
+    },
+    {
+      label: 'Fracture',
+      value: reportTypeCounts.fracture,
+      percent: totalTypeCount ? Math.round((reportTypeCounts.fracture / totalTypeCount) * 100) : 0,
+      barColor: 'bg-orange-400',
+    },
+  ];
+  const maxMonthlyCount = Math.max(...reportsByMonth.map((bucket) => bucket.count || 0), 1);
+  const closeReportModal = () => setSelectedReport(null);
+  const getConfidencePercent = (report) => {
+    if (!report?.confidenceScore && report?.confidenceScore !== 0) return 'N/A';
+    return `${(report.confidenceScore * 100).toFixed(2)}%`;
+  };
 
   const getConfidenceColor = (confidence) => {
     if (confidence >= 0.9) {
@@ -292,90 +446,192 @@ export default function ChestXrayReport() {
           return null;
         }
         return (
-          <div className="p-8">
-            <h2 className="text-3xl font-bold text-gray-900 mb-6">Dashboard</h2>
-            <div className="grid grid-cols-3 gap-6 mb-8">
-              <div className="bg-blue-50 border-2 border-blue-200 rounded-lg p-6">
-                <h3 className="text-lg font-semibold text-blue-900 mb-2">Total Reports</h3>
-                <p className="text-4xl font-bold text-blue-600">247</p>
-                <p className="text-sm text-gray-600 mt-2">+12 this week</p>
+          <div className="p-8 space-y-8">
+            <div>
+              <h2 className={`text-3xl font-bold mb-2 ${isDarkMode ? 'text-gray-100' : 'text-gray-900'}`}>Dashboard</h2>
+              <p className={`${mutedTextClass}`}>Live summary of every report generated through MEDBOT.</p>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className={`${surfaceClass} rounded-lg p-6`}>
+                <h3 className="text-lg font-semibold mb-2">Total Reports</h3>
+                <p className="text-4xl font-bold text-blue-400">{dashboardStats.totalReports}</p>
+                <p className={`text-sm mt-2 ${mutedTextClass}`}>+{dashboardStats.newThisWeek} this week</p>
               </div>
-              <div className="bg-green-50 border-2 border-green-200 rounded-lg p-6">
-                <h3 className="text-lg font-semibold text-green-900 mb-2">Pending Review</h3>
-                <p className="text-4xl font-bold text-green-600">8</p>
-                <p className="text-sm text-gray-600 mt-2">3 urgent cases</p>
+              <div className={`${surfaceClass} rounded-lg p-6`}>
+                <h3 className="text-lg font-semibold mb-2">Pending Review</h3>
+                <p className="text-4xl font-bold text-yellow-400">{dashboardStats.pendingReview}</p>
+                <p className={`text-sm mt-2 ${mutedTextClass}`}>Awaiting manual confirmation</p>
               </div>
-              <div className="bg-purple-50 border-2 border-purple-200 rounded-lg p-6">
-                <h3 className="text-lg font-semibold text-purple-900 mb-2">Completed</h3>
-                <p className="text-4xl font-bold text-purple-600">239</p>
-                <p className="text-sm text-gray-600 mt-2">96.8% accuracy</p>
+              <div className={`${surfaceClass} rounded-lg p-6`}>
+                <h3 className="text-lg font-semibold mb-2">Completed</h3>
+                <p className="text-4xl font-bold text-green-400">{dashboardStats.completedReports}</p>
+                <p className={`text-sm mt-2 ${mutedTextClass}`}>
+                  {dashboardStats.totalReports
+                    ? `${Math.round((dashboardStats.completedReports / Math.max(dashboardStats.totalReports, 1)) * 100)}% of total`
+                    : 'Run a study to see stats'}
+                </p>
               </div>
             </div>
-            <div className="bg-white border-2 border-gray-200 rounded-lg p-6">
-              <h3 className="text-xl font-semibold text-gray-900 mb-4">Recent Activity</h3>
-              <div className="space-y-3">
-                <div className="flex items-center justify-between p-3 bg-gray-50 rounded">
-                  <div>
-                    <p className="font-medium text-gray-900">Patient #12847 - Chest X-ray</p>
-                    <p className="text-sm text-gray-600">Completed 2 hours ago</p>
-                  </div>
-                  <span className="px-3 py-1 bg-green-100 text-green-800 rounded-full text-sm font-medium">Completed</span>
+            <div className={`${surfaceClass} rounded-lg p-6`}>
+              <h3 className="text-xl font-semibold mb-4">Recent Activity</h3>
+              {dashboardStats.recentActivity.length > 0 ? (
+                <div className="space-y-3">
+                  {dashboardStats.recentActivity.map((report) => {
+                    const isPending = (report?.status || report?.reviewStatus || '').toLowerCase().includes('pending');
+                    const statusLabel = report?.status || report?.reviewStatus || (isPending ? 'Pending' : 'Completed');
+                    return (
+                      <div
+                        key={report?._id || report?.createdAt}
+                        className={`flex items-center justify-between p-3 rounded ${isDarkMode ? 'bg-gray-900' : 'bg-gray-50'}`}
+                      >
+                        <div>
+                          <p className="font-medium">
+                            {report?.reportType === 'fracture' ? 'Fracture Study' : 'Chest X-ray'} ·{' '}
+                            {report?.predictedClass || report?.fractureLocation || 'Prediction pending'}
+                          </p>
+                          <p className={`text-sm ${mutedTextClass}`}>
+                            {report?.createdAt ? new Date(report.createdAt).toLocaleString() : 'Timestamp unavailable'}
+                          </p>
+                        </div>
+                        <span
+                          className={`px-3 py-1 rounded-full text-sm font-medium ${
+                            isPending
+                              ? 'bg-yellow-100 text-yellow-800'
+                              : 'bg-green-100 text-green-800'
+                          }`}
+                        >
+                          {statusLabel}
+                        </span>
+                      </div>
+                    );
+                  })}
                 </div>
-                <div className="flex items-center justify-between p-3 bg-gray-50 rounded">
-                  <div>
-                    <p className="font-medium text-gray-900">Patient #12846 - Chest X-ray</p>
-                    <p className="text-sm text-gray-600">Completed 5 hours ago</p>
+              ) : (
+                <p className={mutedTextClass}>No reports yet. Generate a new report to see live activity.</p>
+              )}
+            </div>
+            {selectedReport && (
+              <div
+                className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+                onClick={closeReportModal}
+              >
+                <div
+                  className={`w-full max-w-4xl rounded-2xl shadow-2xl overflow-hidden ${panelBackgroundClass}`}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="flex items-center justify-between px-6 py-4 border-b" style={{ borderColor: isDarkMode ? '#1f2937' : '#e5e7eb' }}>
+                    <div>
+                      <p className="text-sm uppercase tracking-wide text-blue-400 font-semibold">
+                        {selectedReport.reportType === 'fracture' ? 'Fracture Report' : 'Chest X-ray Report'}
+                      </p>
+                      <h3 className="text-2xl font-bold mt-1">{selectedReport.predictedClass || selectedReport.fractureLocation || 'Report Details'}</h3>
+                    </div>
+                    <button
+                      onClick={closeReportModal}
+                      className="px-4 py-2 rounded-lg bg-blue-500 text-white font-medium hover:bg-blue-600 transition"
+                    >
+                      Close
+                    </button>
                   </div>
-                  <span className="px-3 py-1 bg-green-100 text-green-800 rounded-full text-sm font-medium">Completed</span>
-                </div>
-                <div className="flex items-center justify-between p-3 bg-gray-50 rounded">
-                  <div>
-                    <p className="font-medium text-gray-900">Patient #12845 - Chest X-ray</p>
-                    <p className="text-sm text-gray-600">Pending review</p>
+                  <div className="p-6 space-y-6">
+                    <div className="grid gap-6 md:grid-cols-2">
+                      <div className={`rounded-xl p-4 border ${isDarkMode ? 'border-gray-700' : 'border-gray-200'}`}>
+                        <h4 className="text-sm font-semibold uppercase tracking-wide mb-3 text-blue-400">Overview</h4>
+                        <dl className="space-y-2 text-sm">
+                          {userRole === 'doctor' && (
+                            <div className="flex justify-between">
+                              <dt className={mutedTextClass}>Patient ID</dt>
+                              <dd>{selectedReport.userId || 'N/A'}</dd>
+                            </div>
+                          )}
+                          <div className="flex justify-between">
+                            <dt className={mutedTextClass}>Date</dt>
+                            <dd>{selectedReport.createdAt ? new Date(selectedReport.createdAt).toLocaleString() : 'N/A'}</dd>
+                          </div>
+                          <div className="flex justify-between">
+                            <dt className={mutedTextClass}>Report Type</dt>
+                            <dd>{selectedReport.reportType === 'fracture' ? 'Fracture' : 'Chest X-ray'}</dd>
+                          </div>
+                          {selectedReport.fractureLocation && (
+                            <div className="flex justify-between">
+                              <dt className={mutedTextClass}>Location</dt>
+                              <dd>{selectedReport.fractureLocation.replace('XR_', '').replace('_', ' ')}</dd>
+                            </div>
+                          )}
+                          <div className="flex justify-between">
+                            <dt className={mutedTextClass}>Confidence</dt>
+                            <dd className={`${getConfidenceColor(selectedReport.confidenceScore)} font-semibold`}>
+                              {getConfidencePercent(selectedReport)}
+                            </dd>
+                          </div>
+                        </dl>
+                      </div>
+                      <div className={`rounded-xl p-4 border ${isDarkMode ? 'border-gray-700' : 'border-gray-200'}`}>
+                        <h4 className="text-sm font-semibold uppercase tracking-wide mb-3 text-blue-400">Model Notes</h4>
+                        <p className="text-sm leading-relaxed">
+                          {selectedReport.reportType === 'fracture'
+                            ? `The model detected potential findings near the ${selectedReport.fractureLocation || selectedReport.predictedClass}. Please correlate with clinical context before final diagnosis.`
+                            : `Predicted class: ${selectedReport.predictedClass || 'Unknown'}. Review radiographic features and correlate clinically before finalizing.`}
+                        </p>
+                        <p className={`text-xs mt-4 ${mutedTextClass}`}>
+                          Saved via MEDBOT · Confidence {getConfidencePercent(selectedReport)}
+                        </p>
+                      </div>
+                    </div>
+                    {selectedReport.imageURL && (
+                      <div className={`rounded-xl overflow-hidden border ${isDarkMode ? 'border-gray-700' : 'border-gray-200'}`}>
+                        <div className="px-4 py-3 border-b" style={{ borderColor: isDarkMode ? '#1f2937' : '#e5e7eb' }}>
+                          <h4 className="text-sm font-semibold uppercase tracking-wide text-blue-400">Uploaded Image</h4>
+                        </div>
+                        <div className="bg-black flex justify-center">
+                          <img src={selectedReport.imageURL} alt="Report X-ray" className="max-h-[400px] object-contain" />
+                        </div>
+                      </div>
+                    )}
                   </div>
-                  <span className="px-3 py-1 bg-yellow-100 text-yellow-800 rounded-full text-sm font-medium">Pending</span>
                 </div>
               </div>
-            </div>
+            )}
           </div>
         );
       
       case 'history':
         return (
-          <div className="p-8">
-            <h2 className="text-3xl font-bold text-gray-900 mb-6">
+          <div className="p-8 space-y-6">
+            <h2 className={`text-3xl font-bold mb-2 ${isDarkMode ? 'text-gray-100' : 'text-gray-900'}`}>
               {userRole === 'doctor' ? 'Report History' : 'My Reports'}
             </h2>
-            <div className="bg-white border-2 border-gray-200 rounded-lg overflow-hidden">
+            <p className={mutedTextClass}>Every study you generate lands here for quick review and download.</p>
+            <div className={`${surfaceClass} rounded-lg overflow-hidden`}>
               <table className="w-full">
-                <thead className="bg-gray-50 border-b-2 border-gray-200">
+                <thead className={`${isDarkMode ? 'bg-gray-900 border-gray-700' : 'bg-gray-50 border-gray-200'} border-b-2`}>
                   <tr>
-                    {userRole === 'doctor' && <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Patient ID</th>}
-                    <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Date</th>
-                    <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Report Type</th>
-                    <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Prediction</th>
-                    <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Status</th>
-                    <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Actions</th>
+                    {userRole === 'doctor' && <th className="px-6 py-3 text-left text-sm font-semibold">Patient ID</th>}
+                    <th className="px-6 py-3 text-left text-sm font-semibold">Date</th>
+                    <th className="px-6 py-3 text-left text-sm font-semibold">Report Type</th>
+                    <th className="px-6 py-3 text-left text-sm font-semibold">Prediction</th>
+                    <th className="px-6 py-3 text-left text-sm font-semibold">Status</th>
+                    <th className="px-6 py-3 text-left text-sm font-semibold">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-200">
+                <tbody className={`divide-y ${isDarkMode ? 'divide-gray-800' : 'divide-gray-200'}`}>
                   {reports.length > 0 ? (
                     reports.map((report) => (
-                      <tr key={report._id} className="hover:bg-gray-50">
-                        {userRole === 'doctor' && <td className="px-6 py-4 text-sm text-gray-900">{report.userId}</td>}
-                        <td className="px-6 py-4 text-sm text-gray-600">{new Date(report.createdAt).toLocaleDateString()}</td>
-                        <td className="px-6 py-4 text-sm text-gray-600">
+                      <tr key={report._id} className={isDarkMode ? 'hover:bg-gray-900' : 'hover:bg-gray-50'}>
+                        {userRole === 'doctor' && <td className="px-6 py-4 text-sm">{report.userId}</td>}
+                        <td className={`px-6 py-4 text-sm ${mutedTextClass}`}>{new Date(report.createdAt).toLocaleDateString()}</td>
+                        <td className={`px-6 py-4 text-sm ${mutedTextClass}`}>
                           <span className={`px-2 py-1 rounded-full text-xs font-medium ${
                             report.reportType === 'fracture' ? 'bg-orange-100 text-orange-800' : 'bg-blue-100 text-blue-800'
                           }`}>
                             {report.reportType === 'fracture' ? 'Fracture' : 'Chest X-ray'}
                           </span>
                         </td>
-                        <td className="px-6 py-4 text-sm text-gray-600">
+                        <td className={`px-6 py-4 text-sm ${mutedTextClass}`}>
                           {report.reportType === 'fracture' && report.fractureLocation ? (
                             <div>
                               <div className="font-medium">{report.fractureLocation.replace('XR_', '').replace('_', ' ')}</div>
-                              <div className="text-xs text-gray-500">{report.predictedClass}</div>
+                              <div className={`text-xs ${mutedTextClass}`}>{report.predictedClass}</div>
                             </div>
                           ) : (
                             report.predictedClass
@@ -387,13 +643,18 @@ export default function ChestXrayReport() {
                           </span>
                         </td>
                         <td className="px-6 py-4">
-                          <button className="text-blue-600 hover:text-blue-700 font-medium text-sm">View Report</button>
+                          <button
+                            onClick={() => setSelectedReport(report)}
+                            className="text-blue-400 hover:text-blue-300 font-medium text-sm underline-offset-2 hover:underline"
+                          >
+                            View Report
+                          </button>
                         </td>
                       </tr>
                     ))
                   ) : (
                     <tr>
-                      <td colSpan={userRole === 'doctor' ? 6 : 5} className="px-6 py-4 text-center text-gray-500">
+                      <td colSpan={userRole === 'doctor' ? 6 : 5} className={`px-6 py-4 text-center ${mutedTextClass}`}>
                         No reports found.
                       </td>
                     </tr>
@@ -410,51 +671,46 @@ export default function ChestXrayReport() {
           return null;
         }
         return (
-          <div className="p-8">
-            <h2 className="text-3xl font-bold text-gray-900 mb-6">Analytics</h2>
-            <div className="grid grid-cols-2 gap-6">
-              <div className="bg-white border-2 border-gray-200 rounded-lg p-6">
-                <h3 className="text-xl font-semibold text-gray-900 mb-4">Reports by Month</h3>
-                <div className="h-64 flex items-end justify-around gap-2">
-                  {[65, 45, 80, 70, 90, 75].map((height, i) => (
-                    <div key={i} className="flex-1 flex flex-col items-center">
-                      <div className="w-full bg-blue-500 rounded-t" style={{ height: `${height}%` }}></div>
-                      <span className="text-xs text-gray-600 mt-2">M{i + 1}</span>
+          <div className="p-8 space-y-8">
+            <div>
+              <h2 className={`text-3xl font-bold mb-2 ${isDarkMode ? 'text-gray-100' : 'text-gray-900'}`}>Analytics</h2>
+              <p className={mutedTextClass}>Auto-updated insights from the latest chest and fracture studies.</p>
+            </div>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className={`${surfaceClass} rounded-lg p-6`}>
+                <h3 className="text-xl font-semibold mb-4">Reports by Month</h3>
+                <div className="h-64 flex items-end justify-between gap-3">
+                  {reportsByMonth.map((bucket) => (
+                    <div key={`${bucket.year}-${bucket.month}`} className="flex-1 flex flex-col items-center">
+                      <div
+                        className="w-full bg-blue-500 rounded-t transition-all duration-300"
+                        style={{ height: `${(bucket.count / Math.max(maxMonthlyCount, 1)) * 100}%` }}
+                      ></div>
+                      <span className={`text-xs mt-2 ${mutedTextClass}`}>{bucket.label}</span>
+                      <span className={`text-xs ${mutedTextClass}`}>{bucket.count}</span>
                     </div>
                   ))}
                 </div>
               </div>
-              <div className="bg-white border-2 border-gray-200 rounded-lg p-6">
-                <h3 className="text-xl font-semibold text-gray-900 mb-4">Report Types</h3>
-                <div className="space-y-4 mt-8">
-                  <div>
-                    <div className="flex justify-between mb-1">
-                      <span className="text-sm font-medium text-gray-700">Chest X-ray</span>
-                      <span className="text-sm font-medium text-gray-700">78%</span>
-                    </div>
-                    <div className="w-full bg-gray-200 rounded-full h-3">
-                      <div className="bg-blue-500 h-3 rounded-full" style={{ width: '78%' }}></div>
-                    </div>
+              <div className={`${surfaceClass} rounded-lg p-6`}>
+                <h3 className="text-xl font-semibold mb-4">Report Types</h3>
+                {totalTypeCount ? (
+                  <div className="space-y-4">
+                    {reportTypeSummary.map((type) => (
+                      <div key={type.label}>
+                        <div className="flex justify-between mb-1">
+                          <span className="text-sm font-medium">{type.label}</span>
+                          <span className="text-sm font-medium">{type.percent}% ({type.value})</span>
+                        </div>
+                        <div className={`w-full ${isDarkMode ? 'bg-gray-700' : 'bg-gray-200'} rounded-full h-3 overflow-hidden`}>
+                          <div className={`${type.barColor} h-3 rounded-full`} style={{ width: `${type.percent}%` }}></div>
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                  <div>
-                    <div className="flex justify-between mb-1">
-                      <span className="text-sm font-medium text-gray-700">CT Scan</span>
-                      <span className="text-sm font-medium text-gray-700">15%</span>
-                    </div>
-                    <div className="w-full bg-gray-200 rounded-full h-3">
-                      <div className="bg-green-500 h-3 rounded-full" style={{ width: '15%' }}></div>
-                    </div>
-                  </div>
-                  <div>
-                    <div className="flex justify-between mb-1">
-                      <span className="text-sm font-medium text-gray-700">MRI</span>
-                      <span className="text-sm font-medium text-gray-700">7%</span>
-                    </div>
-                    <div className="w-full bg-gray-200 rounded-full h-3">
-                      <div className="bg-purple-500 h-3 rounded-full" style={{ width: '7%' }}></div>
-                    </div>
-                  </div>
-                </div>
+                ) : (
+                  <p className={mutedTextClass}>Generate a report to populate this chart.</p>
+                )}
               </div>
             </div>
           </div>
@@ -462,45 +718,51 @@ export default function ChestXrayReport() {
 
       case 'settings':
         return (
-          <div className="p-8">
-            <h2 className="text-3xl font-bold text-gray-900 mb-6">Settings</h2>
-            <div className="bg-white border-2 border-gray-200 rounded-lg p-6 max-w-2xl">
+          <div className="p-8 space-y-6">
+            <h2 className={`text-3xl font-bold mb-2 ${isDarkMode ? 'text-gray-100' : 'text-gray-900'}`}>Settings</h2>
+            <p className={mutedTextClass}>Tweak your profile, notifications, and display preferences.</p>
+            <div className={`${surfaceClass} rounded-lg p-6 max-w-2xl`}>
               <div className="space-y-6">
                 <div>
-                  <h3 className="text-lg font-semibold text-gray-900 mb-4">Profile Settings</h3>
+                  <h3 className={`text-lg font-semibold mb-4 ${isDarkMode ? 'text-gray-100' : 'text-gray-900'}`}>Profile Settings</h3>
                   <div className="space-y-4">
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
+                      <label className={`block text-sm font-medium mb-1 ${isDarkMode ? 'text-gray-200' : 'text-gray-700'}`}>Full Name</label>
                       <input 
                         type="text" 
-                        className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-blue-500" 
+                        className={`w-full px-4 py-2 border-2 rounded-lg focus:outline-none focus:border-blue-500 ${inputBaseClasses}`} 
                         placeholder={userRole === 'doctor' ? 'Dr. John Smith' : 'Alice Miller'} 
                       />
                     </div>
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                      <label className={`block text-sm font-medium mb-1 ${isDarkMode ? 'text-gray-200' : 'text-gray-700'}`}>Email</label>
                       <input 
                         type="email" 
-                        className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-blue-500" 
+                        className={`w-full px-4 py-2 border-2 rounded-lg focus:outline-none focus:border-blue-500 ${inputBaseClasses}`} 
                         placeholder={userRole === 'doctor' ? 'john.smith@hospital.com' : 'alice.miller@email.com'} 
                       />
                     </div>
                   </div>
                 </div>
-                <div className="border-t-2 border-gray-200 pt-6">
-                  <h3 className="text-lg font-semibold text-gray-900 mb-4">Preferences</h3>
+                <div className={`border-t-2 pt-6 ${isDarkMode ? 'border-gray-700' : 'border-gray-200'}`}>
+                  <h3 className={`text-lg font-semibold mb-4 ${isDarkMode ? 'text-gray-100' : 'text-gray-900'}`}>Preferences</h3>
                   <div className="space-y-3">
                     <label className="flex items-center gap-3">
                       <input type="checkbox" className="w-5 h-5" defaultChecked />
-                      <span className="text-sm text-gray-700">Enable email notifications</span>
+                      <span className={`text-sm ${mutedTextClass}`}>Enable email notifications</span>
                     </label>
                     <label className="flex items-center gap-3">
                       <input type="checkbox" className="w-5 h-5" defaultChecked />
-                      <span className="text-sm text-gray-700">Auto-save reports</span>
+                      <span className={`text-sm ${mutedTextClass}`}>Auto-save reports</span>
                     </label>
                     <label className="flex items-center gap-3">
-                      <input type="checkbox" className="w-5 h-5" />
-                      <span className="text-sm text-gray-700">Dark mode</span>
+                      <input
+                        type="checkbox"
+                        className="w-5 h-5"
+                        checked={isDarkMode}
+                        onChange={() => setTheme(isDarkMode ? 'light' : 'dark')}
+                      />
+                      <span className={`text-sm ${mutedTextClass}`}>Dark mode</span>
                     </label>
                   </div>
                 </div>
@@ -515,16 +777,16 @@ export default function ChestXrayReport() {
       case 'new-report':
       default:
         return (
-          <div className="bg-gray-100 p-6 flex flex-col min-h-full">
-            <div className="w-full bg-white rounded-xl shadow-lg border-2 border-blue-500 overflow-hidden flex flex-col min-h-0">
+          <div className={`${pageBackgroundClass} p-6 flex flex-col min-h-full`}>
+            <div className={`w-full rounded-xl shadow-lg border-2 border-blue-500 overflow-hidden flex flex-col min-h-0 ${panelBackgroundClass}`}>
               {/* Header */}
-              <div className="bg-white px-6 py-4 flex items-center justify-between border-b-2 border-gray-200">
-                <h1 className="text-2xl font-bold text-blue-600">
+              <div className={`px-6 py-4 flex items-center justify-between border-b-2 ${dividerClass}`}>
+                <h1 className="text-2xl font-bold text-blue-400">
                   X-ray Report Generation
                 </h1>
                 <div className="flex items-center gap-4">
                   {/* Report Type Selector */}
-                  <div className="flex gap-2 bg-gray-100 rounded-lg p-1">
+                  <div className={`flex gap-2 rounded-lg p-1 ${isDarkMode ? 'bg-gray-800' : 'bg-gray-100'}`}>
                     <button
                       onClick={() => {
                         setReportType('chest');
@@ -540,7 +802,9 @@ export default function ChestXrayReport() {
                       className={`px-4 py-2 rounded-md text-sm font-medium transition ${
                         reportType === 'chest'
                           ? 'bg-blue-500 text-white'
-                          : 'text-gray-700 hover:bg-gray-200'
+                          : isDarkMode
+                            ? 'text-gray-200 hover:bg-gray-800'
+                            : 'text-gray-700 hover:bg-gray-200'
                       }`}
                     >
                       Chest X-ray
@@ -560,40 +824,54 @@ export default function ChestXrayReport() {
                       className={`px-4 py-2 rounded-md text-sm font-medium transition ${
                         reportType === 'fracture'
                           ? 'bg-blue-500 text-white'
-                          : 'text-gray-700 hover:bg-gray-200'
+                          : isDarkMode
+                            ? 'text-gray-200 hover:bg-gray-800'
+                            : 'text-gray-700 hover:bg-gray-200'
                       }`}
                     >
                       Fracture Detection
                     </button>
                   </div>
                   {prediction && prediction.reportType && (
-                    <div className="text-xs text-gray-600 bg-green-50 px-3 py-1 rounded-full border border-green-200">
+                    <div
+                      className={`text-xs px-3 py-1 rounded-full border ${
+                        isDarkMode
+                          ? 'text-green-200 bg-green-900/30 border-green-600'
+                          : 'text-gray-600 bg-green-50 border-green-200'
+                      }`}
+                    >
                       Auto-detected: {prediction.reportType === 'fracture' ? 'Fracture' : 'Chest X-ray'}
                     </div>
                   )}
-                  <button className="bg-gray-100 hover:bg-gray-200 p-2 rounded-full transition">
-                    <Moon className="w-5 h-5 text-gray-600" />
+                  <button
+                    onClick={() => setTheme(isDarkMode ? 'light' : 'dark')}
+                    className={`p-2 rounded-full transition ${
+                      isDarkMode ? 'bg-gray-800 text-yellow-300 hover:bg-gray-700' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    }`}
+                    aria-label="Toggle theme"
+                  >
+                    {isDarkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
                   </button>
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-0 flex-1 min-h-0">
                 {/* Left Panel - Chat */}
-                <div className="flex flex-col h-full min-h-0 border-r-2 border-gray-200">
+                <div className={`flex flex-col h-full min-h-0 border-r-2 ${dividerClass}`}>
 
                   {/* Chat Header */}
-                  <div className="bg-white border-b-2 border-gray-200 px-6 py-3">
-                    <h2 className="text-lg font-semibold flex items-center gap-2 text-gray-900">
+                  <div className={`px-6 py-3 border-b-2 ${dividerClass}`}>
+                    <h2 className="text-lg font-semibold flex items-center gap-2">
                       <MessageCircle className="w-5 h-5" />
                       Chat about Report
                     </h2>
-                    <p className="text-sm text-gray-500 mt-1">
+                    <p className={`text-sm mt-1 ${mutedTextClass}`}>
                       Ask questions based *only* on the generated report. Image type is auto-detected.
                     </p>
                   </div>
 
                   {/* Chat Messages */}
-                  <div className="flex-1 min-h-0 overflow-y-auto p-6 bg-gray-50">
+                  <div className={`flex-1 min-h-0 overflow-y-auto p-6 ${isDarkMode ? 'bg-gray-900/60' : 'bg-gray-50'}`}>
 
                     {chatMessages.map((msg, idx) => (
                       <div
@@ -605,7 +883,9 @@ export default function ChestXrayReport() {
                         <div
                           className={`p-4 rounded-lg text-base max-w-[90%] ${
                             msg.type === 'assistant'
-                              ? 'bg-gray-200 text-gray-900'
+                              ? isDarkMode
+                                ? 'bg-gray-800 text-gray-100'
+                                : 'bg-gray-200 text-gray-900'
                               : 'bg-blue-500 text-white'
                           }`}
                         >
@@ -616,7 +896,7 @@ export default function ChestXrayReport() {
                   </div>
 
                   {/* Input Area */}
-                  <div className="border-t-2 border-gray-200 p-6 bg-white">
+                  <div className={`border-t-2 p-6 ${dividerClass}`}>
                     <div className="flex gap-3 mb-4">
                       <input
                         type="text"
@@ -624,7 +904,7 @@ export default function ChestXrayReport() {
                         onChange={(e) => setQuestion(e.target.value)}
                         onKeyPress={handleKeyPress}
                         placeholder="Type your question..."
-                        className="flex-1 px-4 py-3 text-base border-2 border-gray-300 rounded-lg focus:outline-none focus:border-blue-500 text-gray-900 placeholder:text-gray-400"
+                        className={`flex-1 px-4 py-3 text-base border-2 rounded-lg focus:outline-none focus:border-blue-500 ${inputBaseClasses}`}
                       />
                       <button
                         onClick={handleSendQuestion}
@@ -636,13 +916,13 @@ export default function ChestXrayReport() {
 
                     {/* Example Questions */}
                     <div>
-                      <p className="text-sm font-medium text-gray-600 mb-2">Example Questions:</p>
+                      <p className={`text-sm font-medium mb-2 ${mutedTextClass}`}>Example Questions:</p>
                       <div className="flex flex-wrap gap-2">
                         {exampleQuestions.map((q, idx) => (
                           <button
                             key={idx}
                             onClick={() => handleQuestionClick(q)}
-                            className="px-3 py-1.5 text-sm bg-white text-blue-600 rounded-full hover:bg-blue-50 transition border border-blue-300"
+                            className={`px-3 py-1.5 text-sm rounded-full transition border ${isDarkMode ? 'bg-gray-800 text-blue-200 border-blue-500 hover:bg-gray-700' : 'bg-white text-blue-600 border-blue-300 hover:bg-blue-50'}`}
                           >
                             {q}
                           </button>
@@ -653,14 +933,14 @@ export default function ChestXrayReport() {
                 </div>
 
                 {/* Right Panel - Image and Report */}
-                <div className="flex flex-col h-full bg-white min-h-0">
+                <div className={`flex flex-col h-full min-h-0 ${isDarkMode ? 'bg-gray-900' : 'bg-white'}`}>
                   {/* Patient Info */}
-                  <div className="border-b-2 border-gray-200 px-6 py-3">
-                    <h2 className="text-lg font-semibold flex items-center gap-2 text-gray-900 mb-2">
+                  <div className={`border-b-2 px-6 py-3 ${dividerClass}`}>
+                    <h2 className="text-lg font-semibold flex items-center gap-2 mb-2">
                       <User className="w-5 h-5" />
                       Patient Information
                     </h2>
-                    <div className="text-sm text-gray-700">
+                    <div className={`text-sm ${mutedTextClass}`}>
                       <span className="font-medium">View:</span> Frontal-AP | <span className="font-medium">Age:</span> 31 | <span className="font-medium">Gender:</span> Male | <span className="font-medium">Ethnicity:</span> White
                     </div>
                   </div>
@@ -669,11 +949,11 @@ export default function ChestXrayReport() {
                     <div className="grid grid-cols-2 gap-6 mb-6">
                       {/* Uploaded Image Section */}
                       <div>
-                        <h3 className="text-base font-semibold flex items-center gap-2 mb-3 text-gray-900">
+                        <h3 className="text-base font-semibold flex items-center gap-2 mb-3">
                           <Upload className="w-5 h-5" />
                           Uploaded Image
                         </h3>
-                        <div className="bg-white rounded-lg overflow-hidden relative mb-3 flex justify-center items-center h-64 border-2 border-gray-300 ">
+                        <div className={`rounded-lg overflow-hidden relative mb-3 flex justify-center items-center h-64 border-2 ${isDarkMode ? 'bg-gray-950 border-gray-700' : 'bg-white border-gray-300'}`}>
                           {imageURL ? (
                             <>
                               <div className="absolute top-2 left-2 bg-black/70 text-white px-2 py-1 text-xs font-medium">
@@ -697,11 +977,11 @@ export default function ChestXrayReport() {
                           )}
                         </div>
                         <div>
-                          <p className="text-xs text-gray-500 text-center mb-2">
+                          <p className={`text-xs text-center mb-2 ${mutedTextClass}`}>
                             Hover over image to zoom (on desktop)
                           </p>
                           <div className="flex items-center gap-3">
-                            <span className="text-sm font-medium text-gray-700 whitespace-nowrap">Zoom Level: {zoomLevel.toFixed(1)}x</span>
+                            <span className={`text-sm font-medium whitespace-nowrap ${mutedTextClass}`}>Zoom Level: {zoomLevel.toFixed(1)}x</span>
                             <input
                               type="range"
                               min="1"
@@ -717,11 +997,11 @@ export default function ChestXrayReport() {
 
                       {/* Generated Report Section */}
                       <div>
-                        <h3 className="text-base font-semibold flex items-center gap-2 mb-3 text-gray-900">
+                        <h3 className="text-base font-semibold flex items-center gap-2 mb-3">
                           <FileText className="w-5 h-5" />
                           Generated Report
                         </h3>
-                        <div className="bg-white rounded-lg border-2 border-gray-300 p-4 text-sm text-gray-800 leading-relaxed min-h-[250px]">
+                        <div className={`rounded-lg border-2 p-4 text-sm leading-relaxed min-h-[250px] ${isDarkMode ? 'bg-gray-950 border-gray-700 text-gray-100' : 'bg-white border-gray-300 text-gray-800'}`}>
                           {loading ? (
                             <div className="flex justify-center items-center h-full">
                               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
@@ -737,7 +1017,7 @@ export default function ChestXrayReport() {
                                 </span>
                               </p>
                               {prediction.reportType === 'fracture' && prediction.fractureLocation && (
-                                <p className="text-sm text-gray-600 mb-2">
+                              <p className={`text-sm mb-2 ${mutedTextClass}`}>
                                   Body Part: <span className="font-medium">{prediction.fractureLocation.replace('XR_', '').replace('_', ' ')}</span>
                                 </p>
                               )}
@@ -837,7 +1117,11 @@ export default function ChestXrayReport() {
                     {imageURL && (
                       <button
                         onClick={() => fileInputRef.current.click()}
-                        className="w-full py-3 border-2 border-gray-300 rounded-lg text-base text-gray-700 font-medium hover:bg-gray-50 transition flex items-center justify-center gap-2"
+                        className={`w-full py-3 border-2 rounded-lg text-base font-medium transition flex items-center justify-center gap-2 ${
+                          isDarkMode
+                            ? 'border-gray-600 text-gray-200 hover:bg-gray-900'
+                            : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                        }`}
                       >
                         <Upload className="w-4 h-4" />
                         Start Over / New Image
@@ -853,7 +1137,7 @@ export default function ChestXrayReport() {
   };
 
   return (
-    <div className="h-screen bg-gray-100 flex">
+    <div className={`h-screen flex ${isDarkMode ? 'bg-gray-950 text-gray-100' : 'bg-gray-100 text-gray-900'}`}>
       {/* Sidebar Navigation */}
       <div className="w-64 bg-blue-600 text-white flex flex-col">
         <div className="p-6 border-b border-blue-500">
@@ -930,8 +1214,8 @@ export default function ChestXrayReport() {
       {/* Main Content */}
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Top Header */}
-        <div className="bg-white px-6 py-4 flex items-center justify-between border-b-2 border-gray-200">
-          <h2 className="text-2xl font-bold text-gray-900">
+        <div className={`px-6 py-4 flex items-center justify-between border-b-2 ${dividerClass} ${panelBackgroundClass}`}>
+          <h2 className="text-2xl font-bold">
             {navItems.find(item => item.id === currentPage)?.name || 'X-ray Report Generation'}
           </h2>
           <div className="flex items-center gap-4">
@@ -944,7 +1228,7 @@ export default function ChestXrayReport() {
         </div>
 
         {/* Page Content */}
-        <div className="flex-1 overflow-auto bg-gray-50">
+        <div className={`flex-1 overflow-auto ${pageBackgroundClass}`}>
           {renderPage()}
         </div>
       </div>
