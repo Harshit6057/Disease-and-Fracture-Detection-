@@ -14,6 +14,18 @@ const initializeMonthBuckets = () => {
     };
   });
 };
+const initializeDayBuckets = (days = 7) => {
+  const now = new Date();
+  return Array.from({ length: days }).map((_, idx) => {
+    const date = new Date(now);
+    date.setDate(now.getDate() - (days - 1 - idx));
+    return {
+      label: date.toLocaleString('default', { month: 'short', day: 'numeric' }),
+      dateKey: date.toISOString().split('T')[0],
+      count: 0,
+    };
+  });
+};
 import { useAuth } from '../context/AuthContext';
 
 export default function ChestXrayReport() {
@@ -45,6 +57,8 @@ export default function ChestXrayReport() {
     fracture: 0,
   });
   const [reportsByMonth, setReportsByMonth] = useState(initializeMonthBuckets());
+  const [reportsByDay, setReportsByDay] = useState(initializeDayBuckets());
+  const [reportInterval, setReportInterval] = useState('month'); // 'month' | 'day'
   const [isFetchingReports, setIsFetchingReports] = useState(false);
   const [theme, setTheme] = useState('light');
   const [selectedReport, setSelectedReport] = useState(null);
@@ -89,6 +103,7 @@ export default function ChestXrayReport() {
     });
 
     const monthBuckets = initializeMonthBuckets();
+    const dayBuckets = initializeDayBuckets();
     data.forEach((report) => {
       if (!report?.createdAt) return;
       const created = new Date(report.createdAt);
@@ -98,8 +113,14 @@ export default function ChestXrayReport() {
       if (bucket) {
         bucket.count += 1;
       }
+      const dayKey = created.toISOString().split('T')[0];
+      const dayBucket = dayBuckets.find((item) => item.dateKey === dayKey);
+      if (dayBucket) {
+        dayBucket.count += 1;
+      }
     });
     setReportsByMonth(monthBuckets);
+    setReportsByDay(dayBuckets);
   }, []);
   const fetchReports = useCallback(async () => {
     if (!user) {
@@ -418,7 +439,8 @@ export default function ChestXrayReport() {
       barColor: 'bg-orange-400',
     },
   ];
-  const maxMonthlyCount = Math.max(...reportsByMonth.map((bucket) => bucket.count || 0), 1);
+  const timeSeriesBuckets = reportInterval === 'day' ? reportsByDay : reportsByMonth;
+  const maxTimeCount = Math.max(...timeSeriesBuckets.map((bucket) => bucket.count || 0), 1);
   const closeReportModal = () => setSelectedReport(null);
   const getConfidencePercent = (report) => {
     if (!report?.confidenceScore && report?.confidenceScore !== 0) return 'N/A';
@@ -593,18 +615,45 @@ export default function ChestXrayReport() {
             </div>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <div className={`${surfaceClass} rounded-lg p-6`}>
-                <h3 className="text-xl font-semibold mb-4">Reports by Month</h3>
-                <div className="h-64 flex items-end justify-between gap-3">
-                  {reportsByMonth.map((bucket) => (
-                    <div key={`${bucket.year}-${bucket.month}`} className="flex-1 flex flex-col items-center">
-                      <div
-                        className="w-full bg-blue-500 rounded-t transition-all duration-300"
-                        style={{ height: `${(bucket.count / Math.max(maxMonthlyCount, 1)) * 100}%` }}
-                      ></div>
-                      <span className={`text-xs mt-2 ${mutedTextClass}`}>{bucket.label}</span>
-                      <span className={`text-xs ${mutedTextClass}`}>{bucket.count}</span>
-                    </div>
-                  ))}
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <h3 className="text-xl font-semibold">Reports by {reportInterval === 'day' ? 'Day' : 'Month'}</h3>
+                    <p className={`text-xs ${mutedTextClass}`}>
+                      {reportInterval === 'day'
+                        ? 'Daily counts for the last week'
+                        : 'Monthly totals for the last six months'}
+                    </p>
+                  </div>
+                  <select
+                    value={reportInterval}
+                    onChange={(e) => setReportInterval(e.target.value)}
+                    className={`px-3 py-1 text-sm rounded-md border ${isDarkMode ? 'bg-gray-900 border-gray-700 text-gray-100' : 'bg-white border-gray-300 text-gray-900'}`}
+                  >
+                    <option value="month">Monthly</option>
+                    <option value="day">Daily</option>
+                  </select>
+                </div>
+                <div className="h-64 flex items-end gap-4 px-2">
+                  {timeSeriesBuckets.map((bucket, idx) => {
+                    const heightPercent = (bucket.count / Math.max(maxTimeCount, 1)) * 100;
+                    const barHeight = bucket.count > 0 ? Math.max(heightPercent, 10) : 2;
+                    return (
+                      <div key={bucket.label + idx} className="flex-1 flex flex-col items-center">
+                        <div className="relative h-48 w-full flex flex-col justify-end items-center">
+                          <div className={`absolute -top-6 px-2 py-0.5 text-xs rounded-full shadow ${isDarkMode ? 'bg-blue-900 text-blue-100' : 'bg-blue-100 text-blue-600'}`}>
+                            {bucket.count}
+                          </div>
+                          <div className={`w-3/4 h-full rounded-md ${isDarkMode ? 'bg-gray-800' : 'bg-gray-200'} flex items-end overflow-hidden`}>
+                            <div
+                              className="w-full rounded-md bg-gradient-to-t from-blue-600 via-blue-400 to-blue-300 transition-all duration-300"
+                              style={{ height: `${barHeight}%` }}
+                            ></div>
+                          </div>
+                        </div>
+                        <span className={`text-xs mt-2 ${mutedTextClass}`}>{bucket.label}</span>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
               <div className={`${surfaceClass} rounded-lg p-6`}>
